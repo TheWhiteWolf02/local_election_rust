@@ -3,16 +3,14 @@ use rand::{Rng, SeedableRng};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::emmc_client::*;
 
-static ID: AtomicU64 = AtomicU64::new(0);
-
-/* flags */
+/* for debugging purposes */
 static mut VERBOSE: bool = false;
 
 /* consts */
@@ -25,7 +23,8 @@ pub(crate) struct Bundle {
     pub(crate) op: Option<fn()>,
 }
 
-fn init() {
+fn init() -> u64 {
+    let id: u64;
     if unsafe { VERBOSE } {
         println!("init - initializing emmc");
     }
@@ -44,8 +43,8 @@ fn init() {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let millis = (now.as_secs() as i64) * 1000 + (now.subsec_nanos() as i64) / 1_000_000;
     let mut rng: StdRng = SeedableRng::seed_from_u64(millis.try_into().unwrap());
-    ID.store(rng.gen(), Ordering::SeqCst);
-    println!("init - id: {}", ID.load(Ordering::SeqCst));
+    id = rng.gen();
+    println!("init - id: {}", id);
 
     if unsafe { VERBOSE } {
         println!("init - done");
@@ -53,6 +52,8 @@ fn init() {
 
     let mut fp = File::create("/aborted.tmp").expect("Unable to create file");
     fp.write_all(b"0").expect("Unable to write data");
+
+    return id;
 }
 
 fn abort() {
@@ -67,7 +68,7 @@ fn abort() {
     std::process::exit(1);
 }
 
-fn check_read_id(read_id: u64) -> u64 {
+fn check_read_id(read_id: u64, id: u64) -> u64 {
     if unsafe { VERBOSE } {
         println!("check read id - Checking file");
     }
@@ -88,11 +89,11 @@ fn check_read_id(read_id: u64) -> u64 {
         println!(
             "check read id - EB id: {} - my id: {}",
             read_id,
-            ID.load(Ordering::SeqCst)
+            id
         );
     }
 
-    if read_id == ID.load(Ordering::SeqCst) {
+    if read_id == id {
         println!("Both read_id and ID is found equal");
         return 0;
     }
@@ -113,10 +114,10 @@ fn read_from_election_block() -> u64 {
     return read_id;
 }
 
-fn read_from_election_block_caller(done: &Arc<Mutex<AtomicBool>>) {
+fn read_from_election_block_caller(done: &Arc<Mutex<AtomicBool>>, id: u64) {
     let read_id = read_from_election_block();
 
-    let res = check_read_id(read_id);
+    let res = check_read_id(read_id, id);
     if res != 0 {
         println!("read check failed");
         abort();
@@ -143,12 +144,12 @@ fn write_to_election_block(new_id: u64) -> u64 {
     return write_id;
 }
 
-fn write_and_check_election_block(done: &Arc<Mutex<AtomicBool>>) {
+fn write_and_check_election_block(done: &Arc<Mutex<AtomicBool>>, id: u64) {
     if unsafe { VERBOSE } {
         println!("Writing to election block");
     }
 
-    let res = write_to_election_block(ID.load(Ordering::SeqCst));
+    let res = write_to_election_block(id);
     if res != 0 {
         abort();
     }
@@ -164,7 +165,7 @@ fn write_and_check_election_block(done: &Arc<Mutex<AtomicBool>>) {
         println!("Checking id");
     }
 
-    let res = check_read_id(read_res);
+    let res = check_read_id(read_res, id);
     if res != 0 {
         abort();
     }
@@ -226,7 +227,7 @@ fn write_latency(w_start: Instant, w_end: Instant, filename: &str) {
     writeln!(file, "{}", latency.as_millis()).expect("Failed to write to file");
 }
 
-fn leader_loop(mut b: Bundle) {
+fn leader_loop(mut b: Bundle, id: u64) {
     let mut leader: bool = true;
     if b.op == None {
         b.op = Some(empty_leader_operation);
@@ -245,7 +246,7 @@ fn leader_loop(mut b: Bundle) {
         // Spawn a thread to execute the read function
         let leader_reader_shared_clone = leader_read_done.clone();
         thread::spawn(move || {
-            read_from_election_block_caller(&leader_reader_shared_clone);
+            read_from_election_block_caller(&leader_reader_shared_clone, id);
         });
 
         if unsafe { VERBOSE } {
@@ -271,14 +272,14 @@ fn leader_loop(mut b: Bundle) {
 pub(crate) fn run_election(b: Bundle) {
     let emmc_ip = std::env::var("EMMC_ADDRESS").unwrap();
     println!("main - emmc address: {}", emmc_ip);
-    init();
+    let id: u64 = init();
 
     // Create an Arc to share the Mutex wrapped AtomicBool across threads
     let write_done = Arc::new(Mutex::new(AtomicBool::new(false)));
     // Spawn a thread to execute the write function
     let writer_shared_clone = write_done.clone();
     thread::spawn(move || {
-        write_and_check_election_block(&writer_shared_clone);
+        write_and_check_election_block(&writer_shared_clone, id);
     });
 
     if unsafe { VERBOSE } {
@@ -303,7 +304,7 @@ pub(crate) fn run_election(b: Bundle) {
     // Spawn a thread to execute the read function
     let reader_shared_clone = read_done.clone();
     thread::spawn(move || {
-        read_from_election_block_caller(&reader_shared_clone);
+        read_from_election_block_caller(&reader_shared_clone, id);
     });
 
     let res = wait_timeout(&read_done, Duration::from_millis(READTIMEOUT));
@@ -316,5 +317,5 @@ pub(crate) fn run_election(b: Bundle) {
         println!("main - Entering leader loop");
     }
 
-    leader_loop(b);
+    leader_loop(b, id);
 }
