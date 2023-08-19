@@ -10,43 +10,40 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::emmc_client::*;
 
-const WRITETIMEOUT: u64 = 1000; // 50 millis
-const READTIMEOUT: u64 = 10; // 10 millis
-const TERM: u64 = 5000; // 5 secs
+static ID: AtomicU64 = AtomicU64::new(0);
 
 /* flags */
 static mut VERBOSE: bool = false;
 
 /* consts */
-const LEADERTIMEOUT: u64 = TERM - READTIMEOUT; // 4 is just a convention.
-
-static ID: AtomicU64 = AtomicU64::new(0);
+const WRITETIMEOUT: u64 = 50; // 50 millis
+const READTIMEOUT: u64 = 10; // 10 millis
+const TERM: u64 = 5000; // 5 secs
+const LEADERTIMEOUT: u64 = TERM - READTIMEOUT;
 
 pub(crate) struct Bundle {
-    pub(crate) op: Option<fn()>
-    // Add other fields from the Bundle struct
+    pub(crate) op: Option<fn()>,
 }
 
 fn init() {
     if unsafe { VERBOSE } {
         println!("init - initializing emmc");
     }
+
     let server_addresses = ServerAddresses {
         read: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), EMMCPORT),
         write: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), EMMCPORTR),
     };
-
     init_emmc(&server_addresses);
 
     if unsafe { VERBOSE } {
         println!("init - getting env id");
     }
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let millis = (now.as_secs() as i64) * 1000 + (now.subsec_nanos() as i64) / 1_000_000;
-
-    let mut rng: StdRng = SeedableRng::seed_from_u64(millis.try_into().unwrap());
 
     // Generate a random number
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let millis = (now.as_secs() as i64) * 1000 + (now.subsec_nanos() as i64) / 1_000_000;
+    let mut rng: StdRng = SeedableRng::seed_from_u64(millis.try_into().unwrap());
     ID.store(rng.gen(), Ordering::SeqCst);
     println!("init - id: {}", ID.load(Ordering::SeqCst));
 
@@ -94,15 +91,12 @@ fn check_read_id(read_id: u64) -> u64 {
             ID.load(Ordering::SeqCst)
         );
     }
+
     if read_id == ID.load(Ordering::SeqCst) {
         println!("Both read_id and ID is found equal");
         return 0;
     }
-    println!(
-        "why not equal {} and {}",
-        read_id,
-        ID.load(Ordering::SeqCst)
-    );
+
     return 1;
 }
 
@@ -153,23 +147,28 @@ fn write_and_check_election_block(done: &Arc<Mutex<AtomicBool>>) {
     if unsafe { VERBOSE } {
         println!("Writing to election block");
     }
+
     let res = write_to_election_block(ID.load(Ordering::SeqCst));
     if res != 0 {
         abort();
     }
+
     if unsafe { VERBOSE } {
         println!("Reading from election block");
     }
+
     let read_res = read_from_election_block();
 
     if unsafe { VERBOSE } {
         println!("Read from election block - read id: {}", read_res);
         println!("Checking id");
     }
+
     let res = check_read_id(read_res);
     if res != 0 {
         abort();
     }
+
     done.lock().unwrap().store(true, Ordering::Relaxed);
 }
 
@@ -202,7 +201,7 @@ fn wait_timeout(done: &Arc<Mutex<AtomicBool>>, timeout: Duration) -> bool {
             break;
         }
     }
-    
+
     if !done.lock().unwrap().load(Ordering::Relaxed) {
         if unsafe { VERBOSE } {
             println!("DONE has not changed. timeout!");
@@ -239,10 +238,11 @@ fn leader_loop(mut b: Bundle) {
 
     while leader {
         let mut zero = Arc::new(Mutex::new(AtomicBool::new(false)));
-        wait_timeout(&mut zero, Duration::from_millis(LEADERTIMEOUT)); // we just wait for the term. No need to check res.
-
+        // we just wait for the term. No need to check res.
+        wait_timeout(&mut zero, Duration::from_millis(LEADERTIMEOUT));
         let leader_start = Instant::now();
-        // Spawn a thread to execute the third_function
+
+        // Spawn a thread to execute the read function
         let leader_reader_shared_clone = leader_read_done.clone();
         thread::spawn(move || {
             read_from_election_block_caller(&leader_reader_shared_clone);
@@ -253,11 +253,13 @@ fn leader_loop(mut b: Bundle) {
         }
 
         let res = wait_timeout(&leader_read_done, Duration::from_millis(READTIMEOUT));
-
         let leader_end = Instant::now();
         write_latency(leader_start, leader_end, "/reelection_latencies.tmp");
+        leader_read_done
+            .lock()
+            .unwrap()
+            .store(false, Ordering::Relaxed);
 
-        leader_read_done.lock().unwrap().store(false, Ordering::Relaxed);
         if res {
             println!("Timeout occured for leader! Quitting!");
             leader_thread.thread().unpark();
@@ -267,36 +269,28 @@ fn leader_loop(mut b: Bundle) {
 }
 
 pub(crate) fn run_election(b: Bundle) {
-    println!("run_election started");
-    // let remaining_time = Duration::from_micros(TERM - LEADERTIMEOUT);
-
     let emmc_ip = std::env::var("EMMC_ADDRESS").unwrap();
     println!("main - emmc address: {}", emmc_ip);
     init();
 
     // Create an Arc to share the Mutex wrapped AtomicBool across threads
     let write_done = Arc::new(Mutex::new(AtomicBool::new(false)));
-
-    // Spawn a thread to execute the function
+    // Spawn a thread to execute the write function
     let writer_shared_clone = write_done.clone();
     thread::spawn(move || {
         write_and_check_election_block(&writer_shared_clone);
     });
-
-    // let start = Instant::now();
 
     if unsafe { VERBOSE } {
         println!("main - Waiting write");
     }
 
     let res = wait_timeout(&write_done, Duration::from_millis(WRITETIMEOUT));
-
     if res {
         println!("error - timedout");
         abort();
     }
 
-    //writer_thread.join().unwrap();
     let zero = Arc::new(Mutex::new(AtomicBool::new(false)));
     wait_timeout(&zero, Duration::from_millis(TERM));
 
@@ -306,22 +300,17 @@ pub(crate) fn run_election(b: Bundle) {
 
     // Create an Arc to share the Mutex wrapped AtomicBool across threads
     let read_done = Arc::new(Mutex::new(AtomicBool::new(false)));
-
-    // Spawn a thread to execute the function
+    // Spawn a thread to execute the read function
     let reader_shared_clone = read_done.clone();
     thread::spawn(move || {
         read_from_election_block_caller(&reader_shared_clone);
     });
 
     let res = wait_timeout(&read_done, Duration::from_millis(READTIMEOUT));
-    //reader_thread.join().unwrap();
-
     if res {
         println!("main - aborting after timedout, reading from election block caller");
         abort();
     }
-
-    // let end = Instant::now();
 
     if unsafe { VERBOSE } {
         println!("main - Entering leader loop");

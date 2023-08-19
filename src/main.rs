@@ -6,14 +6,11 @@ use crate::run_election::*;
 
 fn main() {
     println!("Hello, world!");
-    
 
-    let bundle = Bundle {
-        op: None
-    };
+    let bundle = Bundle { op: None };
     run_election(bundle);
 
-    /* 
+    /*
     // for testing emmc client
     let server_addresses = ServerAddresses {
         read: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
