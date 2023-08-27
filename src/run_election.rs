@@ -24,26 +24,21 @@ pub(crate) struct Bundle {
 }
 
 fn init() -> u64 {
-    let id: u64;
     if unsafe { VERBOSE } {
         println!("init - initializing emmc");
     }
 
     let server_addresses = ServerAddresses {
-        read: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), EMMCPORT),
-        write: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), EMMCPORTR),
+        read: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
+        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
     };
     init_emmc(&server_addresses);
-
-    if unsafe { VERBOSE } {
-        println!("init - getting env id");
-    }
 
     // Generate a random number
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let millis = (now.as_secs() as i64) * 1000 + (now.subsec_nanos() as i64) / 1_000_000;
     let mut rng: StdRng = SeedableRng::seed_from_u64(millis.try_into().unwrap());
-    id = rng.gen();
+    let id: u64 = rng.gen();
     println!("init - id: {}", id);
 
     if unsafe { VERBOSE } {
@@ -86,11 +81,7 @@ fn check_read_id(read_id: u64, id: u64) -> u64 {
     }
     */
     if unsafe { VERBOSE } {
-        println!(
-            "check read id - EB id: {} - my id: {}",
-            read_id,
-            id
-        );
+        println!("check read id - EB id: {} - my id: {}", read_id, id);
     }
 
     if read_id == id {
@@ -104,9 +95,9 @@ fn check_read_id(read_id: u64, id: u64) -> u64 {
 fn read_from_election_block() -> u64 {
     let server_addresses = ServerAddresses {
         read: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
-        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORTR),
+        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
     };
-    let read_id = {
+    let read_id: u64 = {
         let read_socket =
             init_read_socket(&server_addresses.read).expect("Unable to re-initialize read socket");
         _read_from_election_block(&read_socket).expect("Error reading from election block")
@@ -133,7 +124,7 @@ fn read_from_election_block_caller(done: &Arc<Mutex<AtomicBool>>, id: u64) {
 fn write_to_election_block(new_id: u64) -> u64 {
     let server_addresses = ServerAddresses {
         read: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
-        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORTR),
+        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
     };
 
     let write_id: u64 = {
@@ -270,8 +261,6 @@ fn leader_loop(mut b: Bundle, id: u64) {
 }
 
 pub(crate) fn run_election(b: Bundle) {
-    let emmc_ip = std::env::var("EMMC_ADDRESS").unwrap();
-    println!("main - emmc address: {}", emmc_ip);
     let id: u64 = init();
 
     // Create an Arc to share the Mutex wrapped AtomicBool across threads
