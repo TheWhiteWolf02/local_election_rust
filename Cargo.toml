@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 rand = "0.8"
 libc = "0.2"
-tokio = { version = "1", features = ["full"] }
 
 [[bin]]
 name = "main"

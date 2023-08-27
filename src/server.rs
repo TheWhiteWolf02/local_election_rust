@@ -9,7 +9,6 @@ pub fn start_server() -> std::io::Result<()> {
     let socket = UdpSocket::bind(&server_addr)?;
 
     // later read from memory
-    // maybe convert to mutex? - not sure about this
     let mut election_block_value: u64 = 0;
 
     loop {
