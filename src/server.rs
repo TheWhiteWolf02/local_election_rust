@@ -5,7 +5,7 @@ const MAX_UINT64_SIZE: usize = 21;
 const READEB_CMD: &str = "READ_EB";
 
 pub fn start_server() -> std::io::Result<()> {
-    let server_addr = format!("127.0.0.1:{}", EMMCPORT);
+    let server_addr = format!("192.168.2.2:{}", EMMCPORT);
     let socket = UdpSocket::bind(&server_addr)?;
 
     // later read from memory

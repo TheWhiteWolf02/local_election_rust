@@ -14,10 +14,12 @@ use crate::emmc_client::*;
 static mut VERBOSE: bool = false;
 
 /* consts */
-const WRITETIMEOUT: u64 = 50; // 50 millis
-const READTIMEOUT: u64 = 10; // 10 millis
+const WRITETIMEOUT: u64 = 200; // 50 millis
+const READTIMEOUT: u64 = 120; // 10 millis
 const TERM: u64 = 5000; // 5 secs
 const LEADERTIMEOUT: u64 = TERM - READTIMEOUT;
+
+static mut FLAG: bool = true;
 
 pub(crate) struct Bundle {
     pub(crate) op: Option<fn()>,
@@ -29,8 +31,8 @@ fn init() -> u64 {
     }
 
     let server_addresses = ServerAddresses {
-        read: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
-        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
+        read: SocketAddr::new(IpAddr::from([192, 168, 2, 2]), EMMCPORT),
+        write: SocketAddr::new(IpAddr::from([192, 168, 2, 2]), EMMCPORT),
     };
     init_emmc(&server_addresses);
 
@@ -94,26 +96,67 @@ fn check_read_id(read_id: u64, id: u64) -> u64 {
 
 fn read_from_election_block() -> u64 {
     let server_addresses = ServerAddresses {
-        read: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
-        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
+        read: SocketAddr::new(IpAddr::from([192, 168, 2, 2]), EMMCPORT),
+        write: SocketAddr::new(IpAddr::from([192, 168, 2, 2]), EMMCPORT),
     };
     let read_id: u64 = {
         let read_socket =
             init_read_socket(&server_addresses.read).expect("Unable to re-initialize read socket");
         _read_from_election_block(&read_socket).expect("Error reading from election block")
     };
+    /*
+    // this works fine
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     return read_id;
 }
 
 fn read_from_election_block_caller(done: &Arc<Mutex<AtomicBool>>, id: u64) {
+    /*
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     let read_id = read_from_election_block();
 
+    /*
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     let res = check_read_id(read_id, id);
+
+    /*
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     if res != 0 {
         println!("read check failed");
         abort();
     }
-
+    /*
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     if unsafe { VERBOSE } {
         println!("Read from election block - id checked");
         println!("Read from election block - Done");
@@ -123,15 +166,31 @@ fn read_from_election_block_caller(done: &Arc<Mutex<AtomicBool>>, id: u64) {
 
 fn write_to_election_block(new_id: u64) -> u64 {
     let server_addresses = ServerAddresses {
-        read: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
-        write: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), EMMCPORT),
+        read: SocketAddr::new(IpAddr::from([192, 168, 2, 2]), EMMCPORT),
+        write: SocketAddr::new(IpAddr::from([192, 168, 2, 2]), EMMCPORT),
     };
 
+    /*
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     let write_id: u64 = {
         let write_socket = init_write_socket(&server_addresses.write)
             .expect("Unable to re-initialize write socket");
         _write_to_election_block(&write_socket, new_id).expect("Error writing to election block")
     };
+    /*
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     return write_id;
 }
 
@@ -141,6 +200,15 @@ fn write_and_check_election_block(done: &Arc<Mutex<AtomicBool>>, id: u64) {
     }
 
     let res = write_to_election_block(id);
+
+    /*
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
     if res != 0 {
         abort();
     }
@@ -157,9 +225,30 @@ fn write_and_check_election_block(done: &Arc<Mutex<AtomicBool>>, id: u64) {
     }
 
     let res = check_read_id(read_res, id);
+
+    /*
+    // this works fine
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
+
     if res != 0 {
         abort();
     }
+
+    /*
+    // this works fine
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
 
     done.lock().unwrap().store(true, Ordering::Relaxed);
 }
@@ -224,11 +313,22 @@ fn leader_loop(mut b: Bundle, id: u64) {
         b.op = Some(empty_leader_operation);
     }
 
+    /*
+    // this works fine
+    if unsafe { FLAG } {
+        thread::spawn(move || {
+            test();
+            unsafe { FLAG = false };
+        });
+    }
+    */
+
     let leader_thread = thread::spawn(move || leader_run(&mut b));
     // Create an Arc to share the Mutex wrapped AtomicBool across threads
     let leader_read_done = Arc::new(Mutex::new(AtomicBool::new(false)));
 
     while leader {
+        println!("Currently running id - {}", id);
         let mut zero = Arc::new(Mutex::new(AtomicBool::new(false)));
         // we just wait for the term. No need to check res.
         wait_timeout(&mut zero, Duration::from_millis(LEADERTIMEOUT));
@@ -243,6 +343,15 @@ fn leader_loop(mut b: Bundle, id: u64) {
         if unsafe { VERBOSE } {
             println!("Remaining time: {:?}", READTIMEOUT);
         }
+        /*
+        // this works fine
+        if unsafe { FLAG } {
+            thread::spawn(move || {
+                test();
+                unsafe { FLAG = false };
+            });
+        }
+        */
 
         let res = wait_timeout(&leader_read_done, Duration::from_millis(READTIMEOUT));
         let leader_end = Instant::now();
@@ -253,11 +362,35 @@ fn leader_loop(mut b: Bundle, id: u64) {
             .store(false, Ordering::Relaxed);
 
         if res {
+            /*
+            // this works fine
+            if unsafe { FLAG } {
+                thread::spawn(move || {
+                    test();
+                    unsafe { FLAG = false };
+                });
+            }
+            */
             println!("Timeout occured for leader! Quitting!");
             leader_thread.thread().unpark();
             leader = false;
         }
+
+        /*
+        // this works fine
+        if unsafe { FLAG } {
+            thread::spawn(move || {
+                test();
+                unsafe { FLAG = false };
+            });
+        }
+        */
     }
+}
+
+fn test() {
+    let bundle = Bundle { op: None };
+    run_election(bundle);
 }
 
 pub(crate) fn run_election(b: Bundle) {
